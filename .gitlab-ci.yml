@@ -1,0 +1,127 @@
+image: python:3.8-buster
+
+stages:
+  - build
+  - test
+  - deploy
+
+
+variables:
+  XDG_CACHE_HOME: "$CI_PROJECT_DIR/.cache"
+  PROJECT_NAME: elice-backend-default-python
+
+cache: &pip_cache
+    key:
+      files:
+        - requirements.txt
+        - setup.py
+    paths:
+      - .cache/pip/
+
+.prepare-venv-template: &prepare-venv
+  # install project dependencies
+  # we cannot use wheel cache if we use hash checking
+  # reference: https://pip.pypa.io/en/stable/reference/pip_install/#wheel-cache
+  - python -m venv python-env
+  - source ./python-env/bin/activate
+  - pip install -U pip setuptools
+  - pip install -r requirements.txt
+  - pip install -e .[dev]
+  - deactivate
+
+
+build-job:
+  stage: build
+  script:
+    # check whether requirements.txt is in sync
+    - python -c 'import setup; print("\n".join(setup.install_requires))' |
+        (
+          while read ONE_REQUIREMENT; do
+            if ! grep -i $(printf "%q" "$ONE_REQUIREMENT") requirements.txt; then exit 1; fi
+          done
+        )
+
+    # install project dependencies
+    - *prepare-venv
+
+    - source ./python-env/bin/activate
+    - safety check
+
+    - cp configs/example.py configs/default.py
+
+    - flake8 launcher.py app/ tests/ configs/
+    - bandit -ll -r app
+    - mypy launcher.py app/ tests/
+
+    - python setup.py sdist
+
+
+.test-job-template: &test-job-definition
+  cache:
+    <<: *pip_cache
+    # CI fails to use the cache for concurrent containers if we use "pull" policy
+    # (reference: https://gitlab.com/gitlab-org/gitlab-runner/issues/1151)
+    # policy: pull
+  before_script:
+    # install project dependencies
+    - *prepare-venv
+
+
+test-unit-job:
+  stage: test
+  <<: *test-job-definition
+  script:
+    - source ./python-env/bin/activate
+
+    - cp configs/example.py configs/test.py
+    - export CONFIG_PATH=configs/test.py
+
+    - pytest --cov-report term
+  artifacts:
+    paths:
+      - htmlcov/
+    expire_in: 1 days
+
+test-version-job:
+  stage: test
+  cache: {}
+  script:
+    - test "$(cat app/__init__.py | sed -nE "s/^__version__ = '([^']+)'\r?/\1/p")" = "$CI_COMMIT_TAG"
+  only:
+    - tags
+
+
+deploy-review-job:
+  stage: deploy
+  cache: {}
+  image: elice/azcopy:10.0.5
+  script:
+    - mkdir -p _htmlcov/$CI_COMMIT_REF_SLUG
+    - mv htmlcov/* _htmlcov/$CI_COMMIT_REF_SLUG/
+    - azcopy cp _htmlcov/$CI_COMMIT_REF_SLUG "https://$COVREPORT_STORAGE_HOSTNAME/\$web/$PROJECT_NAME$COVREPORT_STORAGE_SAS"
+        --recursive=true --overwrite=true
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    url: https://$COVREPORT_WEB_HOSTNAME/$PROJECT_NAME/$CI_COMMIT_REF_SLUG/index.html
+  except:
+    - tags
+
+
+deploy-docker-job:
+  stage: deploy
+  cache: {}
+  image: docker:latest
+  services:
+  - name: docker:dind
+    # bind to the both ports 2375 and 2376 for gitlab-ci healthcheck
+    command: ["dockerd", "--host=tcp://0.0.0.0:2375", "--host=tcp://0.0.0.0:2376"]
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - export DOCKER_IMAGE_NAME=$CI_REGISTRY_HOSTNAME/gitlab-ci-build/$PROJECT_NAME:$CI_COMMIT_TAG
+    - docker login -u $CI_REGISTRY_USERNAME -p $CI_REGISTRY_PASSWORD $CI_REGISTRY_HOSTNAME
+    - docker build -t $DOCKER_IMAGE_NAME .
+    - docker push $DOCKER_IMAGE_NAME
+  only:
+    - tags
