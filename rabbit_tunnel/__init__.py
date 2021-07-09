@@ -70,7 +70,11 @@ async def _puller(
             if reader is None:
                 raise RuntimeError('Reader is not initialized')
 
-            while data := await reader.read(_READ_BUFFER):
+            while True:
+                data = await reader.read(_READ_BUFFER)
+                if not data:
+                    break
+
                 try:
                     await ws.send(msgpack.dumps({
                         'type': 'data',
@@ -240,7 +244,7 @@ async def run(
         else:
             logger.error('Unexpected WS disconnection')
 
-    except WsConnectionClosedOK:
+    except (asyncio.CancelledError, WsConnectionClosedOK):
         pass
 
     except Exception:
