@@ -4,6 +4,8 @@ Publish your local server to public via rabbit-tunnel.
 
 
 ```sh
+pip install rabbit-tunnel
+
 rt -n hello -p 8080 -sh rtunnel.io
 # Now you can access 127.0.0.1:8080 via http(s)://hello.rtunnel.io
 ```
