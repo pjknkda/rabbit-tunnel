@@ -71,7 +71,11 @@ async def _puller(
                 raise RuntimeError('Reader is not initialized')
 
             while True:
-                data = await reader.read(_READ_BUFFER)
+                try:
+                    data = await reader.read(_READ_BUFFER)
+                except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                    break
+
                 if not data:
                     break
 
@@ -82,7 +86,7 @@ async def _puller(
                         'data': data,
                     }))
                 except WsConnectionClosedError:
-                    return
+                    break
         finally:
             await _close('local-connection-closed')
 
@@ -126,7 +130,7 @@ async def _puller(
                 try:
                     writer.write(msg['data'])
                     await writer.drain()
-                except ConnectionResetError:
+                except (RuntimeError, ConnectionResetError, BrokenPipeError):
                     await _close('local-connection-closed')
                     break
 
