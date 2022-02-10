@@ -170,6 +170,13 @@ async def _puller(
         except Exception:
             logger.exception('Exception from tunnel proxy connection keepalive sender')
 
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                pass
+
         del conn_uid_to_conn_info[conn_uid]
 
 
