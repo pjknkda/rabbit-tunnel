@@ -30,4 +30,4 @@ optional arguments:
 
 
 ### Requirements
-- Python 3.7 - 3.9
+- Python 3.7 - 3.10

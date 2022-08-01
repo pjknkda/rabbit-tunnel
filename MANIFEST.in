@@ -20,10 +20,10 @@ global-exclude *
 
 include LICENSE
 include Makefile
+include pyproject.toml
 include README.md
 include requirements.txt
 include setup.cfg
-include setup.py
 
 graft rabbit_tunnel
 
